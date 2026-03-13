@@ -3,25 +3,24 @@ name: Build Windows EXE
 on: [push]
 
 jobs:
- build:
+  build:
+    runs-on: windows-latest
 
-  runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  steps:
+      - name: Setup CMake
+        uses: lukka/get-cmake@latest
 
-  - uses: actions/checkout@v3
+      - name: Configure
+        run: cmake -B build
 
-  - name: Setup CMake
-    uses: lukka/get-cmake@latest
+      - name: Build
+        run: cmake --build build --config Release
 
-  - name: Configure
-    run: cmake -B build
-
-  - name: Build
-    run: cmake --build build --config Release
-
-  - name: Upload artifact
-    uses: actions/upload-artifact@v3
-    with:
-      name: ScreenTool
-      path: build/Release/
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScreenTool
+          path: build/Release/
