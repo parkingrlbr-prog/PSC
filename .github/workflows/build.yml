@@ -1,0 +1,27 @@
+name: Build Windows EXE
+
+on: [push]
+
+jobs:
+ build:
+
+  runs-on: windows-latest
+
+  steps:
+
+  - uses: actions/checkout@v3
+
+  - name: Setup CMake
+    uses: lukka/get-cmake@latest
+
+  - name: Configure
+    run: cmake -B build
+
+  - name: Build
+    run: cmake --build build --config Release
+
+  - name: Upload artifact
+    uses: actions/upload-artifact@v3
+    with:
+      name: ScreenTool
+      path: build/Release/
