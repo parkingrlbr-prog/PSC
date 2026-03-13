@@ -1,102 +1,151 @@
 #include <windows.h>
+#include <gdiplus.h>
 #include <iostream>
-#include <filesystem>
 
-#pragma comment(lib,"gdi32.lib")
+#pragma comment(lib,"gdiplus.lib")
 
-void SaveScreenshot(int x,int y,int w,int h)
+using namespace Gdiplus;
+
+POINT startPt;
+POINT endPt;
+bool selecting=false;
+
+ULONG_PTR gdiplusToken;
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    HDC hScreen = GetDC(NULL);
-    HDC hDC = CreateCompatibleDC(hScreen);
-    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen,w,h);
+    switch(msg)
+    {
+        case WM_LBUTTONDOWN:
+        selecting=true;
+        startPt.x=LOWORD(lParam);
+        startPt.y=HIWORD(lParam);
+        endPt=startPt;
+        break;
 
-    SelectObject(hDC,hBitmap);
+        case WM_MOUSEMOVE:
+        if(selecting)
+        {
+            endPt.x=LOWORD(lParam);
+            endPt.y=HIWORD(lParam);
+            InvalidateRect(hwnd,NULL,TRUE);
+        }
+        break;
 
-    BitBlt(hDC,0,0,w,h,hScreen,x,y,SRCCOPY);
+        case WM_LBUTTONUP:
+        selecting=false;
 
-    std::filesystem::create_directory("screenshots");
+        {
+            int x=min(startPt.x,endPt.x);
+            int y=min(startPt.y,endPt.y);
+            int w=abs(startPt.x-endPt.x);
+            int h=abs(startPt.y-endPt.y);
 
-    BITMAPFILEHEADER fileHeader;
-    BITMAPINFOHEADER infoHeader;
+            HDC hScreen=GetDC(NULL);
+            HDC hDC=CreateCompatibleDC(hScreen);
+            HBITMAP hBitmap=CreateCompatibleBitmap(hScreen,w,h);
 
-    infoHeader.biSize = sizeof(infoHeader);
-    infoHeader.biWidth = w;
-    infoHeader.biHeight = -h;
-    infoHeader.biPlanes = 1;
-    infoHeader.biBitCount = 24;
-    infoHeader.biCompression = BI_RGB;
+            SelectObject(hDC,hBitmap);
 
-    int bmpSize = w*h*3;
+            BitBlt(hDC,0,0,w,h,hScreen,x,y,SRCCOPY);
 
-    char* bmpData = new char[bmpSize];
+            Bitmap bmp(hBitmap,NULL);
 
-    GetDIBits(hScreen,hBitmap,0,h,bmpData,(BITMAPINFO*)&infoHeader,DIB_RGB_COLORS);
+            CLSID pngClsid;
+            UINT num, size;
+            GetImageEncodersSize(&num,&size);
 
-    HANDLE file = CreateFile("screenshots/screen.bmp",GENERIC_WRITE,0,NULL,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+            ImageCodecInfo* pImageCodecInfo=(ImageCodecInfo*)(malloc(size));
+            GetImageEncoders(num,size,pImageCodecInfo);
 
-    DWORD written;
+            for(UINT j=0;j<num;++j)
+            {
+                if(wcscmp(pImageCodecInfo[j].MimeType,L"image/png")==0)
+                {
+                    pngClsid=pImageCodecInfo[j].Clsid;
+                    break;
+                }
+            }
 
-    fileHeader.bfType = 0x4D42;
-    fileHeader.bfOffBits = sizeof(fileHeader)+sizeof(infoHeader);
-    fileHeader.bfSize = bmpSize+fileHeader.bfOffBits;
+            bmp.Save(L"screenshot.png",&pngClsid,NULL);
 
-    WriteFile(file,&fileHeader,sizeof(fileHeader),&written,NULL);
-    WriteFile(file,&infoHeader,sizeof(infoHeader),&written,NULL);
-    WriteFile(file,bmpData,bmpSize,&written,NULL);
+            free(pImageCodecInfo);
 
-    CloseHandle(file);
+            DeleteDC(hDC);
+            ReleaseDC(NULL,hScreen);
+            DeleteObject(hBitmap);
 
-    delete[] bmpData;
+            PostQuitMessage(0);
+        }
+        break;
 
-    DeleteObject(hBitmap);
-    DeleteDC(hDC);
-    ReleaseDC(NULL,hScreen);
+        case WM_PAINT:
+        {
+            PAINTSTRUCT ps;
+            HDC hdc=BeginPaint(hwnd,&ps);
+
+            if(selecting)
+            {
+                Rectangle(hdc,
+                          startPt.x,
+                          startPt.y,
+                          endPt.x,
+                          endPt.y);
+            }
+
+            EndPaint(hwnd,&ps);
+        }
+        break;
+
+        case WM_DESTROY:
+        PostQuitMessage(0);
+        break;
+    }
+
+    return DefWindowProc(hwnd,msg,wParam,lParam);
 }
 
-int main()
+int WINAPI WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int)
 {
-    std::cout<<"PRINT SCREEN = screenshot\n";
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&gdiplusToken,&gdiplusStartupInput,NULL);
 
-    while(true)
+    RegisterHotKey(NULL,1,0,VK_MULTIPLY); // * dugme
+
+    MSG msg;
+
+    while(GetMessage(&msg,NULL,0,0))
     {
-        if(GetAsyncKeyState(VK_SNAPSHOT) & 1)
+        if(msg.message==WM_HOTKEY)
         {
-            std::cout<<"1 = cijeli ekran\n";
-            std::cout<<"2 = dio ekrana\n";
+            WNDCLASS wc={0};
 
-            int choice;
-            std::cin>>choice;
+            wc.lpfnWndProc=WndProc;
+            wc.hInstance=hInstance;
+            wc.lpszClassName="snip";
 
-            if(choice==1)
-            {
-                int w = GetSystemMetrics(SM_CXSCREEN);
-                int h = GetSystemMetrics(SM_CYSCREEN);
+            RegisterClass(&wc);
 
-                SaveScreenshot(0,0,w,h);
-            }
+            HWND hwnd=CreateWindowEx(
+                WS_EX_TOPMOST|WS_EX_LAYERED,
+                "snip",
+                "",
+                WS_POPUP,
+                0,0,
+                GetSystemMetrics(SM_CXSCREEN),
+                GetSystemMetrics(SM_CYSCREEN),
+                NULL,NULL,hInstance,NULL);
 
-            if(choice==2)
-            {
-                int x,y,w,h;
+            SetLayeredWindowAttributes(hwnd,0,120,LWA_ALPHA);
 
-                std::cout<<"X: ";
-                std::cin>>x;
-
-                std::cout<<"Y: ";
-                std::cin>>y;
-
-                std::cout<<"Width: ";
-                std::cin>>w;
-
-                std::cout<<"Height: ";
-                std::cin>>h;
-
-                SaveScreenshot(x,y,w,h);
-            }
-
-            std::cout<<"Screenshot sacuvan\n";
+            ShowWindow(hwnd,SW_SHOW);
         }
 
-        Sleep(100);
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
     }
+
+    GdiplusShutdown(gdiplusToken);
+
+    return 0;
 }
